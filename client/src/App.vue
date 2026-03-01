@@ -24,9 +24,8 @@ const socket = io({
 });
 
 const BOARD_SIZE_STORAGE_KEY = "chess16-board-size";
-const DEFAULT_BOARD_SIZE = 760;
 const MIN_BOARD_SIZE = 320;
-const BOARD_SIZE_VIEWPORT_OFFSET = 240;
+const BOARD_BOTTOM_GAP = 24;
 const SESSION_STORAGE_KEY = "chess16-session";
 const playerName = ref(`Игрок-${Math.floor(Math.random() * 900 + 100)}`);
 const createForm = reactive({
@@ -46,7 +45,7 @@ const resultModalOpen = ref(false);
 const boardHostElement = ref(null);
 const boardElement = ref(null);
 const preferredBoardSize = ref(loadStoredBoardSize());
-const boardSizeLimit = ref(DEFAULT_BOARD_SIZE);
+const boardSizeLimit = ref(MIN_BOARD_SIZE);
 const lastDragEndedAt = ref(0);
 const dragState = reactive({
   phase: "idle",
@@ -64,7 +63,7 @@ const resizeState = reactive({
   pointerId: null,
   startX: 0,
   startY: 0,
-  startSize: DEFAULT_BOARD_SIZE,
+  startSize: MIN_BOARD_SIZE,
 });
 
 let boardHostResizeObserver = null;
@@ -258,10 +257,14 @@ const dragPieceStyle = computed(() => {
   };
 });
 
-const boardStyle = computed(() => ({
-  width: `${clampBoardSize(preferredBoardSize.value)}px`,
-  height: `${clampBoardSize(preferredBoardSize.value)}px`,
-}));
+const boardStyle = computed(() => {
+  const targetSize = preferredBoardSize.value ?? boardSizeLimit.value;
+
+  return {
+    width: `${clampBoardSize(targetSize)}px`,
+    height: `${clampBoardSize(targetSize)}px`,
+  };
+});
 
 function pieceClass(piece) {
   if (!piece) {
@@ -287,9 +290,9 @@ function clampBoardSize(size) {
 function loadStoredBoardSize() {
   try {
     const storedValue = Number(window.localStorage.getItem(BOARD_SIZE_STORAGE_KEY));
-    return Number.isFinite(storedValue) ? Math.max(MIN_BOARD_SIZE, storedValue) : DEFAULT_BOARD_SIZE;
+    return Number.isFinite(storedValue) ? Math.max(MIN_BOARD_SIZE, storedValue) : null;
   } catch {
-    return DEFAULT_BOARD_SIZE;
+    return null;
   }
 }
 
@@ -302,7 +305,10 @@ function updateBoardSizeLimit() {
   const widthLimit = boardHostElement.value
     ? Math.floor(boardHostElement.value.clientWidth - 4)
     : window.innerWidth;
-  const heightLimit = Math.floor(window.innerHeight - BOARD_SIZE_VIEWPORT_OFFSET);
+  const boardHostTop = boardHostElement.value
+    ? Math.floor(boardHostElement.value.getBoundingClientRect().top)
+    : 0;
+  const heightLimit = Math.floor(window.innerHeight - boardHostTop - BOARD_BOTTOM_GAP);
 
   boardSizeLimit.value = Math.max(
     MIN_BOARD_SIZE,
@@ -353,7 +359,7 @@ function resetResizeState() {
   resizeState.pointerId = null;
   resizeState.startX = 0;
   resizeState.startY = 0;
-  resizeState.startSize = clampBoardSize(preferredBoardSize.value);
+  resizeState.startSize = clampBoardSize(preferredBoardSize.value ?? boardSizeLimit.value);
 }
 
 function shouldIgnoreClick() {
@@ -617,7 +623,7 @@ function handleResizePointerDown(event) {
   resizeState.pointerId = event.pointerId;
   resizeState.startX = event.clientX;
   resizeState.startY = event.clientY;
-  resizeState.startSize = clampBoardSize(preferredBoardSize.value);
+  resizeState.startSize = clampBoardSize(preferredBoardSize.value ?? boardSizeLimit.value);
 }
 
 function sendMove(from, to) {

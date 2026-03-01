@@ -1,10 +1,12 @@
+@import url("https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap");
+
 :root {
   color: #f5ebd8;
   background:
     radial-gradient(circle at top left, rgba(217, 184, 120, 0.22), transparent 26%),
     radial-gradient(circle at bottom right, rgba(134, 161, 91, 0.18), transparent 30%),
     linear-gradient(145deg, #17201b 0%, #0d1410 55%, #111915 100%);
-  font-family: "Palatino Linotype", "Book Antiqua", Palatino, serif;
+  font-family: "Ubuntu", "Segoe UI", sans-serif;
   line-height: 1.4;
   font-weight: 400;
   color-scheme: dark;
