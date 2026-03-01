@@ -1,0 +1,16 @@
+{
+  "name": "chess16-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "build": "node -e \"console.log('Server build is not required')\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
+
