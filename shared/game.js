@@ -342,6 +342,15 @@ export function getLegalMoves(board, from, activeColor = null) {
   });
 }
 
+export function getPremoveTargets(board, from, activeColor = null) {
+  const piece = getPiece(board, from);
+  if (!piece || (activeColor && piece.color !== activeColor)) {
+    return [];
+  }
+
+  return getPseudoLegalMoves(board, from);
+}
+
 export function playerHasLegalMove(board, color) {
   for (let row = 0; row < BOARD_SIZE; row += 1) {
     for (let col = 0; col < BOARD_SIZE; col += 1) {

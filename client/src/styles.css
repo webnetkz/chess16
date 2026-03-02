@@ -250,6 +250,12 @@ h2 {
   background: linear-gradient(180deg, rgba(27, 38, 32, 0.96), rgba(16, 22, 18, 0.92));
 }
 
+.status-note {
+  margin: 0.35rem 0 0;
+  color: rgba(214, 233, 255, 0.88);
+  font-size: 0.92rem;
+}
+
 .timer-card {
   min-width: 120px;
   padding: 0.7rem 0.85rem;

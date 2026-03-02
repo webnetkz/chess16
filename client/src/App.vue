@@ -6,8 +6,10 @@ import {
   FILES,
   VARIANT_SETUP_DESCRIPTION,
   getLegalMoves,
+  getPremoveTargets,
   isKingInCheck,
   sameSquare,
+  toNotation,
 } from "../../shared/game.js";
 import {
   playCaptureSound,
@@ -38,6 +40,8 @@ const games = ref([]);
 const currentGame = ref(null);
 const yourColor = ref(null);
 const selectedSquare = ref(null);
+const premove = ref(null);
+const premoveSubmitting = ref(false);
 const errorMessage = ref("");
 const connectionState = ref("connecting");
 const session = ref(loadStoredSession());
@@ -107,17 +111,19 @@ const statusText = computed(() => {
   return isYourTurn.value ? "Ваш ход." : "Ход соперника.";
 });
 
-const legalMoves = computed(() => {
+const availableMoves = computed(() => {
   const game = currentGame.value;
-  if (!game || !selectedSquare.value || !isYourTurn.value) {
+  if (!game || !selectedSquare.value || !yourColor.value || game.status !== "active") {
     return [];
   }
 
-  return getLegalMoves(game.board, selectedSquare.value, yourColor.value);
+  return isYourTurn.value
+    ? getLegalMoves(game.board, selectedSquare.value, yourColor.value)
+    : getPremoveTargets(game.board, selectedSquare.value, yourColor.value);
 });
 
-const legalMoveSet = computed(
-  () => new Set(legalMoves.value.map((square) => `${square.row}-${square.col}`)),
+const availableMoveSet = computed(
+  () => new Set(availableMoves.value.map((square) => `${square.row}-${square.col}`)),
 );
 
 const displayedRows = computed(() =>
@@ -154,7 +160,7 @@ const displayedSquares = computed(() => {
         showRank: col === leftCol,
         isDark: (row + col) % 2 === 1,
         isSelected: sameSquare(selectedSquare.value, { row, col }),
-        isLegalTarget: legalMoveSet.value.has(`${row}-${col}`),
+        isLegalTarget: availableMoveSet.value.has(`${row}-${col}`),
         isDragOrigin: dragState.phase === "dragging" && sameSquare(dragState.from, { row, col }),
         isDragHover: dragState.phase === "dragging" && sameSquare(dragState.hoverSquare, { row, col }),
         isLastMove:
@@ -239,6 +245,18 @@ const rematchStatusText = computed(() => {
   }
 
   return "Можно отправить запрос на реванш.";
+});
+
+const premoveLabel = computed(() => {
+  if (!premove.value) {
+    return "";
+  }
+
+  if (premoveSubmitting.value) {
+    return "Предход выполняется...";
+  }
+
+  return `Предход: ${toNotation(premove.value.from)} -> ${toNotation(premove.value.to)}`;
 });
 
 const dragPieceStyle = computed(() => {
@@ -340,6 +358,32 @@ function clockLabel(ms) {
 
 function clearSelection() {
   selectedSquare.value = null;
+}
+
+function clearPremove() {
+  premove.value = null;
+  premoveSubmitting.value = false;
+}
+
+function queuePremove(from, to) {
+  const nextPremove = {
+    from: { row: from.row, col: from.col },
+    to: { row: to.row, col: to.col },
+  };
+  const isSameMove =
+    sameSquare(premove.value?.from, nextPremove.from) &&
+    sameSquare(premove.value?.to, nextPremove.to);
+
+  if (isSameMove) {
+    clearPremove();
+    clearSelection();
+    return;
+  }
+
+  premove.value = nextPremove;
+  premoveSubmitting.value = false;
+  selectedSquare.value = { ...nextPremove.from };
+  errorMessage.value = "";
 }
 
 function resetDragState() {
@@ -484,6 +528,7 @@ function applySessionResponse(response) {
   yourColor.value = response.color;
   currentGame.value = response.game;
   playerName.value = response.playerName ?? playerName.value;
+  clearPremove();
   clearSelection();
   setResultModalVisibility(response.game, previousGame);
   saveSession({
@@ -595,6 +640,7 @@ function leaveGame() {
     currentGame.value = null;
     yourColor.value = null;
     resultModalOpen.value = false;
+    clearPremove();
     clearSelection();
     refreshGames();
   });
@@ -626,7 +672,8 @@ function handleResizePointerDown(event) {
   resizeState.startSize = clampBoardSize(preferredBoardSize.value ?? boardSizeLimit.value);
 }
 
-function sendMove(from, to) {
+function sendMove(from, to, options = {}) {
+  const { onSuccess, onFailure, preserveSelection = false } = options;
   void unlockAudio();
   socket.emit(
     "make-move",
@@ -638,13 +685,61 @@ function sendMove(from, to) {
       if (!response.ok) {
         errorMessage.value = response.error;
         playInvalidSound();
+        onFailure?.(response);
         return;
       }
 
       errorMessage.value = "";
-      clearSelection();
+      if (!preserveSelection) {
+        clearSelection();
+      }
+      onSuccess?.(response);
     },
   );
+}
+
+function tryExecutePremove(game, previousGame = null) {
+  if (
+    !premove.value ||
+    premoveSubmitting.value ||
+    !yourColor.value ||
+    game.status !== "active" ||
+    game.activeColor !== yourColor.value
+  ) {
+    return;
+  }
+
+  const becameYourTurn =
+    !previousGame ||
+    previousGame.status !== "active" ||
+    previousGame.activeColor !== yourColor.value;
+
+  if (!becameYourTurn) {
+    return;
+  }
+
+  const queuedMove = premove.value;
+  const legalTargets = getLegalMoves(game.board, queuedMove.from, yourColor.value);
+  const canExecute = legalTargets.some((target) => sameSquare(target, queuedMove.to));
+
+  if (!canExecute) {
+    clearPremove();
+    clearSelection();
+    void unlockAudio();
+    playInvalidSound();
+    return;
+  }
+
+  premoveSubmitting.value = true;
+  sendMove(queuedMove.from, queuedMove.to, {
+    preserveSelection: true,
+    onSuccess() {
+      clearPremove();
+    },
+    onFailure() {
+      clearPremove();
+    },
+  });
 }
 
 function cancelRematch() {
@@ -671,18 +766,25 @@ function handleSquareClick(square) {
   }
 
   const piece = game.board[square.row][square.col];
-  if (selectedSquare.value && legalMoveSet.value.has(square.key)) {
-    sendMove(selectedSquare.value, { row: square.row, col: square.col });
+  if (selectedSquare.value && availableMoveSet.value.has(square.key)) {
+    if (isYourTurn.value) {
+      sendMove(selectedSquare.value, { row: square.row, col: square.col });
+    } else {
+      queuePremove(selectedSquare.value, { row: square.row, col: square.col });
+    }
     return;
   }
 
-  if (!isYourTurn.value) {
+  if (game.status !== "active") {
     clearSelection();
     return;
   }
 
   if (piece?.color === yourColor.value) {
     if (sameSquare(selectedSquare.value, square)) {
+      if (sameSquare(premove.value?.from, square)) {
+        clearPremove();
+      }
       clearSelection();
       return;
     }
@@ -702,7 +804,10 @@ function handleSquareClick(square) {
 }
 
 function handleSquarePointerDown(square, event) {
-  if ((event.pointerType === "mouse" && event.button !== 0) || !isYourTurn.value) {
+  if (
+    (event.pointerType === "mouse" && event.button !== 0) ||
+    currentGame.value?.status !== "active"
+  ) {
     return;
   }
 
@@ -778,8 +883,12 @@ function handleGlobalPointerUp(event) {
     const target = dragState.hoverSquare ?? getSquareFromPoint(event.clientX, event.clientY);
     lastDragEndedAt.value = Date.now();
 
-    if (from && target && !sameSquare(from, target) && legalMoveSet.value.has(target.key)) {
-      sendMove(from, { row: target.row, col: target.col });
+    if (from && target && !sameSquare(from, target) && availableMoveSet.value.has(target.key)) {
+      if (isYourTurn.value) {
+        sendMove(from, { row: target.row, col: target.col });
+      } else {
+        queuePremove(from, { row: target.row, col: target.col });
+      }
     } else {
       if (target && from && !sameSquare(from, target)) {
         void unlockAudio();
@@ -819,8 +928,12 @@ function handleGameState(game) {
     resetDragState();
   }
   if (game.status !== "active") {
+    clearPremove();
     clearSelection();
+    return;
   }
+
+  tryExecutePremove(game, previousGame);
 }
 
 function handleLobbyUpdate(nextGames) {
@@ -878,6 +991,15 @@ watch(boardHostElement, async () => {
   updateBoardSizeLimit();
   reconnectBoardHostObserver();
 });
+
+watch(
+  () => [currentGame.value?.id, currentGame.value?.status, currentGame.value?.activeColor, yourColor.value],
+  () => {
+    if (currentGame.value) {
+      tryExecutePremove(currentGame.value);
+    }
+  },
+);
 </script>
 
 <template>
@@ -985,6 +1107,7 @@ watch(boardHostElement, async () => {
           <div>
             <p class="eyebrow">Статус партии</p>
             <h2>{{ statusText }}</h2>
+            <p v-if="premoveLabel" class="status-note">{{ premoveLabel }}</p>
           </div>
           <div class="timers">
             <div class="timer-card" :data-active="currentGame.activeColor === 'white'">
